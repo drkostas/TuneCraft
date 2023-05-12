@@ -13,14 +13,15 @@ https://github.com/yourusername/TuneCraft/blob/master/LICENSE)
 + [Running the code](#run_locally)
   + [Execution Options](#execution_options)
     + [main.py](#src_main)
+    + [Usage Examples](#usage_examples)
 + [Todo](#todo)
 + [License](#license)
 
 ## About <a name = "about"></a>
 
-TuneCraft is a Spotify playlist generator that creates new playlists based on your existing playlists, musical taste, and specified criteria. It is designed to help you explore new music while maintaining a familiar sound.
+TuneCraft is a unique Spotify playlist generator that creates new playlists based on your existing playlists, musical taste, and specified criteria. Designed to help you explore new music while maintaining a familiar sound, TuneCraft ensures that it recommends new songs by checking all your liked songs and songs that exist in your playlists.
 
-The main code is located in the [main.py](main.py) file. Functions for interacting with the Spotify API and generating playlists can be found in the same file.
+The main code is located in the main.py file. Functions for interacting with the Spotify API and generating playlists can be found in the same file.
 
 ## Getting Started <a name = "getting_started"></a>
 
@@ -91,31 +92,39 @@ Optional Arguments:
   -h, --help            Show this help message and exit
 ```
 
-Usage Examples <a name = "usage_examples"></a>
+#### Usage Examples <a name="usage_examples"></a>
 
 Generate a new playlist based on a seed playlist ID with 20 tracks:
 
+```ShellSession
 $ python main.py -u your_user_id -s your_seed_playlist_id -nt 20
-
+```
 
 Generate a new playlist with only new artists:
 
+```ShellSession
 $ python main.py -u your_user_id -s your_seed_playlist_id --new-artists
-
+```
 
 List all your playlists:
 
+```ShellSession
 $ python main.py -u your_user_id --list-playlists
-
+```
 
 Refresh the local database and list all your playlists:
 
+```ShellSession
 $ python main.py -u your_user_id --refresh --list-playlists
+```
+
 
 Todo <a name = "todo"></a>
+
 Add support for generating playlists based on moods and genres.
 Implement a web interface for easier user interaction.
 Improve the playlist generation algorithm for better recommendations.
+
 License <a name = "license"></a>
 
 This project is licensed under the Apache License - see the LICENSE file for details.
