@@ -1,0 +1,4 @@
+SPOTIFY_USERNAME=<username>
+SPOTIFY_CLIENT_ID=<client_id>
+SPOTIFY_SECRET=<secret>
+SPOTIFY_REDIRECT_URI=<redirect_uri>
