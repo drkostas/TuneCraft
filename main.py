@@ -26,16 +26,18 @@ def get_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Spotify playlist generator', add_help=False)
 
     optional_args = parser.add_argument_group('Optional Arguments')
-    optional_args.add_argument('--refresh', action='store_true', 
+    optional_args.add_argument('--refresh', action='store_true',
                                help="Refresh playlists from Spotify")
-    optional_args.add_argument('--list-playlists', action='store_true', 
+    optional_args.add_argument('--list-playlists', action='store_true',
                                help="List your Spotify playlists")
-    optional_args.add_argument('-s', '--seed-playlist', 
+    optional_args.add_argument('-s', '--seed-playlist',
                                help="The seed playlist ID to generate a new playlist from")
-    optional_args.add_argument('-nt', '--number-tracks', type=int, default=20, 
+    optional_args.add_argument('-nt', '--number-tracks', type=int, default=20,
                                help="Number of tracks in the generated playlist")
-    optional_args.add_argument('--new-artists', action='store_true', 
+    optional_args.add_argument('--new-artists', action='store_true',
                                help="Include only new artists in the generated playlist")
+    optional_args.add_argument('--use_all', action='store_true', 
+                               help="Use all tracks in the seed playlist as seeds")
     optional_args.add_argument("-h", "--help", action="help", help="Show this help message and exit")
 
     return parser.parse_args()
@@ -77,7 +79,7 @@ def get_and_save_liked_tracks(user_id: str):
 
     with sqlite3.connect("playlists.db") as conn:
         cursor = conn.cursor()
-        cursor.execute("CREATE TABLE IF NOT EXISTS liked_tracks ",
+        cursor.execute("CREATE TABLE IF NOT EXISTS liked_tracks " +
                        "(user_id TEXT, track_id TEXT, PRIMARY KEY(user_id, track_id))")
         cursor.executemany("REPLACE INTO liked_tracks (user_id, track_id) VALUES (?, ?)",
                            [(user_id, track_id) for track_id in liked_tracks])
@@ -111,7 +113,7 @@ def save_playlists_to_db(playlists: List[dict], user_id: str):
         cursor.executemany("REPLACE INTO playlists (id, name, user_id) VALUES (?, ?, ?)",
                            [(pl["id"], pl["name"], user_id) for pl in playlists])
 
-        cursor.execute("CREATE TABLE IF NOT EXISTS playlist_tracks ",
+        cursor.execute("CREATE TABLE IF NOT EXISTS playlist_tracks " +
                        "(playlist_id TEXT, track_id TEXT, PRIMARY KEY(playlist_id, track_id))")
         for pl in playlists:
             tracks = get_playlist_tracks(pl["id"])
@@ -141,7 +143,7 @@ def list_playlists(user_id: str, refresh: bool = False):
         print(f"{pl[0]}: {pl[1]}")
 
 
-def generate_playlist(user_id: str, seed_playlist: str, number_tracks: int, new_artists: bool):
+def generate_playlist(user_id: str, seed_playlist: str, number_tracks: int, new_artists: bool, use_all: bool):
     seed_playlist_name = sp.playlist(seed_playlist)["name"]
     print(f"Using {seed_playlist_name} as seed playlist.")
 
@@ -151,21 +153,23 @@ def generate_playlist(user_id: str, seed_playlist: str, number_tracks: int, new_
 
     seed_playlist_tracks = get_playlist_tracks(seed_playlist)
 
-    print("Here are the tracks in the seed playlist:")
-    display_playlist_tracks(seed_playlist, user_id)
-    input_str = input("Enter space-separated track numbers to use as seeds (leave blank for random selection): ")
-
-    if input_str.strip() == "":
-        selected_indices = []
+    if use_all:
+        selected_indices = list(range(len(seed_playlist_tracks)))
     else:
-        try:
-            selected_indices = [int(x) - 1 for x in input_str.split()]
-            if not all(0 <= idx < len(seed_playlist_tracks) for idx in selected_indices):
+        print("Here are the tracks in the seed playlist:")
+        display_playlist_tracks(seed_playlist, user_id)
+        input_str = input("Enter space-separated track numbers to use as seeds (leave blank for random selection): ")
+        if input_str.strip() == "":
+            selected_indices = []
+        else:
+            try:
+                selected_indices = [int(x) - 1 for x in input_str.split()]
+                if not all(0 <= idx < len(seed_playlist_tracks) for idx in selected_indices):
+                    print("Invalid input. Using random tracks.")
+                    selected_indices = []
+            except ValueError:
                 print("Invalid input. Using random tracks.")
                 selected_indices = []
-        except ValueError:
-            print("Invalid input. Using random tracks.")
-            selected_indices = []
 
     if not selected_indices:
         selected_indices = random.sample(range(len(seed_playlist_tracks)), min(5, len(seed_playlist_tracks)))
@@ -183,20 +187,25 @@ def generate_playlist(user_id: str, seed_playlist: str, number_tracks: int, new_
     existing_tracks.update(liked_track_ids)
 
     new_tracks = []
-    print("Retrieving recommendations...", end="")
-    while len(new_tracks) < number_tracks:
-        print(".", end="", flush=True)
-        recommendations = sp.recommendations(seed_tracks=seed_tracks,
-                                             limit=min(number_tracks * 2, 100))
-        recommended_tracks = [track for track in recommendations["tracks"]
-                              if track["artists"][0]["id"] not in seed_artists and track["id"] not in existing_tracks]
+    chunk_size = 5
+    seed_playlist_tracks_chunks = [seed_playlist_tracks[i:i + chunk_size] for i in range(0, len(seed_playlist_tracks), chunk_size)]
 
-        for track in recommended_tracks:
-            if len(new_tracks) < number_tracks:
-                new_tracks.append(track)
-            else:
-                break
-    print(" Done!")
+    for seed_tracks in seed_playlist_tracks_chunks:
+        seed_artists = set([sp.track(track)["artists"][0]["id"] for track in seed_tracks]) if new_artists else set()
+
+        print("Retrieving recommendations...", end="")
+        while len(new_tracks) < number_tracks:
+            print(".", end="", flush=True)
+            recommendations = sp.recommendations(seed_tracks=seed_tracks, limit=min(number_tracks * 2, 100))
+            recommended_tracks = [track for track in recommendations["tracks"]
+                                    if track["artists"][0]["id"] not in seed_artists and track["id"] not in existing_tracks]
+
+            for track in recommended_tracks:
+                if len(new_tracks) < number_tracks:
+                    new_tracks.append(track)
+                else:
+                    break
+        print(" Done!")
     playlist_name = f"TuneCraft_{seed_playlist_name}"
     new_playlist = sp.user_playlist_create(user_id, playlist_name)
     sp.playlist_add_items(new_playlist["id"], [track["id"] for track in new_tracks])
@@ -222,7 +231,7 @@ def main():
 
     if args.seed_playlist:
         print("Generating a new playlist...")
-        generate_playlist(user_id, args.seed_playlist, args.number_tracks, args.new_artists)
+        generate_playlist(user_id, args.seed_playlist, args.number_tracks, args.new_artists, args.use_all)
 
 
 if __name__ == "__main__":
