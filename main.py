@@ -43,6 +43,20 @@ def get_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def create_tables_if_not_exists(table: str = None):
+    with sqlite3.connect("playlists.db") as conn:
+        cursor = conn.cursor()
+        if table == 'playlists' or table is None:
+            cursor.execute("CREATE TABLE IF NOT EXISTS playlists (id TEXT PRIMARY KEY, name TEXT, user_id TEXT)")
+        if table == 'playlist_tracks' or table is None:
+            cursor.execute("CREATE TABLE IF NOT EXISTS playlist_tracks "
+                           "(playlist_id TEXT, track_id TEXT, PRIMARY KEY(playlist_id, track_id))")
+        if table == 'liked_tracks' or table is None:
+            cursor.execute("CREATE TABLE IF NOT EXISTS liked_tracks "
+                           "(user_id TEXT, track_id TEXT, PRIMARY KEY(user_id, track_id))")
+        conn.commit()
+
+
 def get_user_playlists(user_id: str) -> List[dict]:
     playlists = []
     offset = 0
@@ -79,8 +93,7 @@ def get_and_save_liked_tracks(user_id: str):
 
     with sqlite3.connect("playlists.db") as conn:
         cursor = conn.cursor()
-        cursor.execute("CREATE TABLE IF NOT EXISTS liked_tracks " +
-                       "(user_id TEXT, track_id TEXT, PRIMARY KEY(user_id, track_id))")
+        create_tables_if_not_exists(table='liked_tracks')
         cursor.executemany("REPLACE INTO liked_tracks (user_id, track_id) VALUES (?, ?)",
                            [(user_id, track_id) for track_id in liked_tracks])
         conn.commit()
@@ -109,17 +122,34 @@ def display_playlist_tracks(playlist_id: str, user_id: str) -> None:
 def save_playlists_to_db(playlists: List[dict], user_id: str):
     with sqlite3.connect("playlists.db") as conn:
         cursor = conn.cursor()
-        cursor.execute("CREATE TABLE IF NOT EXISTS playlists (id TEXT PRIMARY KEY, name TEXT, user_id TEXT)")
+        create_tables_if_not_exists(table='plalylists')
         cursor.executemany("REPLACE INTO playlists (id, name, user_id) VALUES (?, ?, ?)",
                            [(pl["id"], pl["name"], user_id) for pl in playlists])
 
-        cursor.execute("CREATE TABLE IF NOT EXISTS playlist_tracks " +
-                       "(playlist_id TEXT, track_id TEXT, PRIMARY KEY(playlist_id, track_id))")
+        create_tables_if_not_exists(table='playlist_tracks')
         for pl in playlists:
             tracks = get_playlist_tracks(pl["id"])
             cursor.executemany("REPLACE INTO playlist_tracks (playlist_id, track_id) VALUES (?, ?)",
                                [(pl["id"], track_id) for track_id in tracks])
 
+        conn.commit()
+
+
+def check_and_clear_database():
+    with sqlite3.connect("playlists.db") as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        existing_tables = cursor.fetchall()
+        if existing_tables:
+            clear = input("Tables already exist. Do you want to clear the database? (y/n): ")
+            if clear.lower() == 'y':
+                cursor.execute("DROP TABLE IF EXISTS playlists")
+                cursor.execute("DROP TABLE IF EXISTS playlist_tracks")
+                cursor.execute("DROP TABLE IF EXISTS liked_tracks")
+            else:
+                print("Continuing with existing tables.")
+                return
+        create_tables_if_not_exists()
         conn.commit()
 
 
@@ -131,8 +161,33 @@ def get_playlists_from_db(user_id: str) -> List[Tuple[str, str]]:
 
 
 def refresh_playlists(user_id: str):
-    playlists = get_user_playlists(user_id)
-    save_playlists_to_db(playlists, user_id)
+    create_tables_if_not_exists()
+    with sqlite3.connect("playlists.db") as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM playlists WHERE user_id = ?", (user_id,))
+        existing_playlists = set([row[0] for row in cursor.fetchall()])
+        current_playlists = set([pl["id"] for pl in sp.current_user_playlists()["items"]])
+
+        # Delete playlists not in Spotify anymore
+        for pl in existing_playlists - current_playlists:
+            cursor.execute("DELETE FROM playlists WHERE id = ?", (pl,))
+
+        # Update tracks in each playlist
+        for pl in current_playlists:
+            tracks = get_playlist_tracks(pl)
+            cursor.execute("SELECT track_id FROM playlist_tracks WHERE playlist_id = ?", (pl,))
+            existing_tracks = set([row[0] for row in cursor.fetchall()])
+            current_tracks = set(tracks)
+
+            # Delete tracks not in the playlist anymore
+            for track in existing_tracks - current_tracks:
+                cursor.execute("DELETE FROM playlist_tracks WHERE playlist_id = ? AND track_id = ?", (pl, track))
+
+            # Insert new tracks
+            for track in current_tracks - existing_tracks:
+                cursor.execute("INSERT INTO playlist_tracks (playlist_id, track_id) VALUES (?, ?)", (pl, track))
+
+        conn.commit()
 
 
 def list_playlists(user_id: str, refresh: bool = False):
@@ -177,6 +232,7 @@ def generate_playlist(user_id: str, seed_playlist: str, number_tracks: int, new_
     seed_tracks = [seed_playlist_tracks[idx] for idx in selected_indices]
     seed_artists = set([sp.track(track)["artists"][0]["id"] for track in seed_tracks]) if new_artists else set()
 
+    # Check existing tracks including liked songs
     existing_tracks = set()
     for pl in get_playlists_from_db(user_id):
         existing_tracks.update(get_playlist_tracks(pl[0]))
@@ -214,6 +270,7 @@ def generate_playlist(user_id: str, seed_playlist: str, number_tracks: int, new_
     sp.playlist_add_items(new_playlist["id"], [track["id"] for track in new_tracks])
 
 
+
 def main():
     args = get_args()
     print("Welcome to Spotify Playlist Generator!")
@@ -223,18 +280,23 @@ def main():
         return
 
     if args.refresh:
+        check_and_clear_database()
         print("Refreshing playlists from Spotify and saving them locally...")
         refresh_playlists(user_id)
         print("Retrieving liked tracks from Spotify and saving them locally...")
         get_and_save_liked_tracks(user_id)
+        playlists = get_user_playlists(user_id)
+        save_playlists_to_db(playlists, user_id)
 
     if args.list_playlists:
         print("Your playlists:")
-        list_playlists(user_id)
+        list_playlists(user_id, args.refresh)
 
     if args.seed_playlist:
         print("Generating a new playlist...")
         generate_playlist(user_id, args.seed_playlist, args.number_tracks, args.new_artists, args.use_all)
+
+    print("Program finished.")
 
 
 if __name__ == "__main__":
