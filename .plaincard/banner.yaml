@@ -1,0 +1,15 @@
+kind: banner
+name: TuneCraft
+line: Makes new Spotify playlists of tracks you have not heard, based on the ones
+  you like.
+accent: green
+diagram:
+- note:
+    label: your playlists
+- arrow
+- box:
+    text: spotify
+- arrow
+- note:
+    label: new playlist
+    accent: true

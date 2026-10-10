@@ -1,3 +1,5 @@
+![TuneCraft](docs/images/banner.png)
+
 # TuneCraft: Spotify Playlist Generator
 
 [![GitHub license](https://img.shields.io/badge/license-Apache-blue.svg)](
